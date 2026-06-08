@@ -1,0 +1,160 @@
+====================================
+FarmersDeskLtd POS Web App - SETUP GUIDE
+====================================
+
+📋 CONTENTS:
+- app.py (Flask web server)
+- requirements.txt (Python dependencies)
+- templates/login.html
+- templates/dashboard.html
+- templates/new_sale.html
+- templates/reports.html
+- templates/customers.html
+
+====================================
+⚡ QUICK START (5 MINUTES)
+====================================
+
+STEP 1: Install Python (if not already installed)
+- Download from: https://www.python.org/downloads/
+- Install and ensure "Add Python to PATH" is checked
+
+STEP 2: Open Command Prompt/Terminal
+- Press Windows key + R
+- Type: cmd
+- Press Enter
+
+STEP 3: Navigate to the POS folder
+- Type: cd C:\path\to\pos\folder
+(Replace with your actual folder path)
+
+STEP 4: Install Requirements
+- Type: pip install -r requirements.txt
+- Wait for installation to complete
+
+STEP 5: Run the Web App
+- Type: python app.py
+- You should see: "Running on http://127.0.0.1:5000"
+
+STEP 6: Open in Browser
+- Open: http://localhost:5000
+- Login with:
+  Username: pos
+  Password: pos2026
+
+====================================
+🖨️ THERMAL PRINTER SETUP
+====================================
+
+1. ENSURE PRINTER IS CONNECTED
+- Connect your thermal printer to the PC
+- Install printer drivers from manufacturer
+
+2. SET AS DEFAULT PRINTER
+- Go to: Settings → Devices → Printers
+- Right-click your thermal printer
+- Select: "Set as default printer"
+
+3. TEST PRINTER
+- Go to Printer Properties
+- Click "Print Test Page"
+- If test page prints, printer is ready ✓
+
+4. IN THE APP
+- When you create a sale, receipt automatically prints
+- Uses your default printer (thermal)
+
+====================================
+🗄️ DATABASE CONNECTION
+====================================
+
+The app is configured to connect to:
+- Server: localhost\SQLEXPRESS01
+- Database: FarmersDeskLtd
+- Username: pos
+- Password: pos2026
+
+If your SQL Server details are different, edit app.py:
+
+Line 15: DB_CONNECTION = (
+    'Driver={ODBC Driver 17 for SQL Server};'
+    'Server=YOUR_SERVER_NAME;'  ← Change here
+    'Database=FarmersDeskLtd;'
+    'UID=pos;'
+    'PWD=pos2026;'
+)
+
+====================================
+📱 FEATURES INCLUDED
+====================================
+
+✓ User Login/Logout
+✓ Dashboard with today's stats
+✓ New Sale entry with thermal printer
+✓ Daily sales reports
+✓ Customer management
+✓ Receipt printing
+
+====================================
+🆘 TROUBLESHOOTING
+====================================
+
+ERROR: "ODBC connection failed"
+→ Check SQL Server is running
+→ Verify username and password
+→ Ensure FarmersDeskLtd database exists
+
+ERROR: "Module not found"
+→ Run: pip install -r requirements.txt again
+
+ERROR: "Port 5000 already in use"
+→ Change port in line 250: app.run(port=5001)
+
+ERROR: "Printer not found"
+→ Check printer is connected and set as default
+→ Install printer drivers
+
+====================================
+🚀 ACCESSING FROM OTHER COMPUTERS
+====================================
+
+To access from other computers on your network:
+
+1. In Command Prompt, find your IP:
+   - Type: ipconfig
+   - Look for "IPv4 Address" (e.g., 192.168.x.x)
+
+2. Edit app.py line 250:
+   - Change: host='127.0.0.1'
+   - To: host='0.0.0.0'
+
+3. Others can access:
+   - http://YOUR_IP:5000
+   - Example: http://192.168.1.100:5000
+
+====================================
+📝 CUSTOMIZATION
+====================================
+
+To add more features:
+- Edit app.py to add routes
+- Create new HTML files in templates/
+- Edit database queries to match your tables
+
+Need help? Check the Python Flask documentation:
+https://flask.palletsprojects.com/
+
+====================================
+✅ YOU'RE READY!
+====================================
+
+Your POS system is now live!
+- Dashboard: Shows today's sales
+- New Sale: Record transactions
+- Reports: View sales history
+- Customers: Manage customer list
+- Thermal Printer: Auto-prints receipts
+
+Questions? Need modifications? Contact your developer.
+
+Good luck! 🎉

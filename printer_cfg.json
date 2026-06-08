@@ -1,0 +1,9 @@
+{
+  "connection": "Network",
+  "usb_vendor": "0x04B8",
+  "usb_product": "0x0202",
+  "serial_port": "COM3",
+  "serial_baud": "9600",
+  "net_host": "192.168.1.231",
+  "net_port": "9100"
+}
