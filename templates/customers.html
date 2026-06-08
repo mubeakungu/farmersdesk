@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Customers - FarmersDeskLtd POS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; }
+        .navbar { background: #333; color: white; padding: 15px; display: flex; justify-content: space-between; }
+        .navbar a { color: white; text-decoration: none; margin-left: 20px; cursor: pointer; }
+        .container { padding: 30px; max-width: 900px; margin: 0 auto; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        h2 { color: #333; margin-bottom: 20px; }
+        .customer-list { list-style: none; }
+        .customer-item { padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .customer-item:hover { background: #f9f9f9; }
+        .customer-name { font-weight: bold; color: #333; }
+        .btn { padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; display: inline-block; margin-bottom: 20px; border: none; cursor: pointer; }
+        .btn:hover { background: #764ba2; }
+        .empty { color: #999; text-align: center; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>🏪 FarmersDeskLtd POS</h1>
+        <a href="/dashboard">← Back to Dashboard</a>
+    </div>
+    
+    <div class="container">
+        <div class="card">
+            <h2>👥 Customers</h2>
+            <a href="/dashboard" class="btn">← Back</a>
+            
+            {% if customers %}
+            <ul class="customer-list">
+                {% for customer in customers %}
+                <li class="customer-item">
+                    <span class="customer-name">{{ customer[0] }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty">No customers found</div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

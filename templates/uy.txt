@@ -1,0 +1,1860 @@
+"""
+FarmersDesk Ltd – Desktop Application
+Tkinter + pyodbc  |  SQL Server: FarmersDeskLtd
+Covers: Login, Dashboard, Transactions, Items,
+        Credit Customers, Suppliers & Purchases,
+        Inventory & Stock, Payments & Receipts, Reports
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox
+import pyodbc
+import datetime
+from typing import Optional
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATABASE CONFIG
+# ─────────────────────────────────────────────────────────────────────────────
+DB_CONFIG = {
+    "driver":   "ODBC Driver 17 for SQL Server",
+    "server":   "localhost\\SQLEXPRESS01",
+    "database": "FarmersDeskLtd",
+    "trusted":  False,
+    "uid":      "pos",
+    "pwd":      "pos2026",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PALETTE
+# ─────────────────────────────────────────────────────────────────────────────
+CLR = {
+    "bg":        "#F0F4F8",
+    "sidebar":   "#1A3C5E",
+    "header":    "#1A3C5E",
+    "accent":    "#2E86AB",
+    "btn":       "#2E86AB",
+    "btn_hover": "#1B6CA8",
+    "danger":    "#C0392B",
+    "success":   "#27AE60",
+    "white":     "#FFFFFF",
+    "row_odd":   "#EAF2FF",
+    "row_even":  "#FFFFFF",
+    "text_dark": "#1A1A2E",
+    "text_light":"#FFFFFF",
+    "border":    "#CBD5E0",
+    "label_bg":  "#F0F4F8",
+}
+
+FONT_H1   = ("Helvetica Neue", 18, "bold")
+FONT_H2   = ("Helvetica Neue", 13, "bold")
+FONT_BODY = ("Helvetica Neue", 11)
+FONT_SM   = ("Helvetica Neue", 10)
+FONT_MONO = ("Courier New",    10)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DB LAYER
+# ═════════════════════════════════════════════════════════════════════════════
+class Database:
+    def __init__(self):
+        self.conn: Optional[pyodbc.Connection] = None
+
+    def connect(self) -> bool:
+        try:
+            c = DB_CONFIG
+            if c["trusted"]:
+                cs = (f"DRIVER={{{c['driver']}}};"
+                      f"SERVER={c['server']};"
+                      f"DATABASE={c['database']};"
+                      f"Trusted_Connection=yes;")
+            else:
+                cs = (f"DRIVER={{{c['driver']}}};"
+                      f"SERVER={c['server']};"
+                      f"DATABASE={c['database']};"
+                      f"UID={c['uid']};PWD={c['pwd']};")
+            self.conn = pyodbc.connect(cs, timeout=10)
+            return True
+        except pyodbc.Error as e:
+            print(f"Connection error: {e}")
+            return False
+
+    def cursor(self):
+        if not self.conn:
+            raise RuntimeError("Not connected")
+        return self.conn.cursor()
+
+    def execute(self, sql: str, params=()):
+        cur = self.cursor()
+        cur.execute(sql, params)
+        self.conn.commit()
+        return cur
+
+    def fetchall(self, sql: str, params=()):
+        cur = self.cursor()
+        cur.execute(sql, params)
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        return cols, [list(r) for r in rows]
+
+    def fetchone(self, sql: str, params=()):
+        cur = self.cursor()
+        cur.execute(sql, params)
+        return cur.fetchone()
+
+    def close(self):
+        if self.conn:
+            self.conn.close()
+
+
+db = Database()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HELPER WIDGETS
+# ═════════════════════════════════════════════════════════════════════════════
+def style_btn(btn: tk.Button, danger=False, success=False):
+    if danger:
+        color = CLR["danger"]
+    elif success:
+        color = CLR["success"]
+    else:
+        color = CLR["btn"]
+    btn.config(bg=color, fg=CLR["white"], font=FONT_BODY,
+               relief="flat", cursor="hand2",
+               padx=12, pady=5, bd=0,
+               activebackground=CLR["btn_hover"])
+
+
+def money(v) -> str:
+    try:
+        return f"{float(v):,.2f}"
+    except (TypeError, ValueError):
+        return "0.00"
+
+
+def today_str() -> str:
+    return datetime.date.today().strftime("%Y-%m-%d")
+
+
+def month_start() -> str:
+    return datetime.date.today().replace(day=1).strftime("%Y-%m-%d")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SCROLLABLE TABLE
+# ═════════════════════════════════════════════════════════════════════════════
+class DataTable(ttk.Frame):
+    def __init__(self, parent, columns: list, height=12, **kw):
+        super().__init__(parent, **kw)
+        self.columns = columns
+        self.height  = height
+        self._build()
+
+    def _build(self):
+        style = ttk.Style()
+        style.configure("FD.Treeview",
+                         font=FONT_SM, rowheight=24,
+                         background=CLR["white"],
+                         fieldbackground=CLR["white"])
+        style.configure("FD.Treeview.Heading",
+                         font=("Helvetica Neue", 10, "bold"),
+                         background=CLR["header"],
+                         foreground=CLR["white"])
+        style.map("FD.Treeview",
+                  background=[("selected", CLR["accent"])])
+
+        self.tv = ttk.Treeview(self, columns=self.columns,
+                               show="headings", style="FD.Treeview",
+                               height=self.height)
+        vsb = ttk.Scrollbar(self, orient="vertical",   command=self.tv.yview)
+        hsb = ttk.Scrollbar(self, orient="horizontal", command=self.tv.xview)
+        self.tv.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        money_words = {"amount", "balance", "paid", "total", "bal",
+                       "price", "cost", "kes", "credit", "debit"}
+        for col in self.columns:
+            w = 140 if len(col) > 10 else 110
+            anchor = "e" if any(m in col.lower() for m in money_words) else "w"
+            self.tv.heading(col, text=col, anchor=anchor)
+            self.tv.column(col,  width=w,  anchor=anchor, minwidth=50)
+
+        self.tv.tag_configure("odd",  background=CLR["row_odd"])
+        self.tv.tag_configure("even", background=CLR["row_even"])
+
+        self.tv.grid(row=0, column=0, sticky="nsew")
+        vsb .grid(row=0, column=1, sticky="ns")
+        hsb .grid(row=1, column=0, sticky="ew")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+
+    def load(self, rows: list):
+        self.tv.delete(*self.tv.get_children())
+        for i, row in enumerate(rows):
+            tag = "odd" if i % 2 == 0 else "even"
+            self.tv.insert("", "end", values=row, tags=(tag,))
+
+    def selected_values(self) -> list:
+        sel = self.tv.selection()
+        return list(self.tv.item(sel[0], "values")) if sel else []
+
+    def bind_select(self, callback):
+        self.tv.bind("<<TreeviewSelect>>", callback)
+
+    def bind_double(self, callback):
+        self.tv.bind("<Double-1>", callback)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LOGIN WINDOW
+# ═════════════════════════════════════════════════════════════════════════════
+class LoginWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.authenticated_user = None
+        self.title("FarmersDesk – Login")
+        self.resizable(False, False)
+        self.configure(bg=CLR["bg"])
+        self._center(380, 420)
+        self.grab_set()
+        self._build()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _center(self, w, h):
+        self.geometry(f"{w}x{h}+{(self.winfo_screenwidth()-w)//2}"
+                      f"+{(self.winfo_screenheight()-h)//2}")
+
+    def _build(self):
+        hdr = tk.Frame(self, bg=CLR["header"], height=80)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="🌾  FarmersDesk Ltd",
+                 font=FONT_H1, bg=CLR["header"],
+                 fg=CLR["white"]).pack(expand=True)
+
+        body = tk.Frame(self, bg=CLR["bg"], padx=40, pady=20)
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text="Sign In", font=FONT_H2,
+                 bg=CLR["bg"], fg=CLR["text_dark"]).pack(pady=(10, 20))
+
+        self.db_lbl = tk.Label(body, text="⏳ Connecting to database…",
+                               font=FONT_SM, bg=CLR["bg"], fg="orange")
+        self.db_lbl.pack(pady=(0, 10))
+
+        f1 = tk.Frame(body, bg=CLR["bg"])
+        f1.pack(fill="x", pady=4)
+        tk.Label(f1, text="Username", font=FONT_SM,
+                 bg=CLR["bg"], width=10, anchor="w").pack(side="left")
+        self.user_var = tk.StringVar()
+        ttk.Entry(f1, textvariable=self.user_var,
+                  font=FONT_BODY, width=22).pack(side="left")
+
+        f2 = tk.Frame(body, bg=CLR["bg"])
+        f2.pack(fill="x", pady=4)
+        tk.Label(f2, text="Password", font=FONT_SM,
+                 bg=CLR["bg"], width=10, anchor="w").pack(side="left")
+        self.pass_var = tk.StringVar()
+        self.pass_entry = ttk.Entry(f2, textvariable=self.pass_var,
+                                    font=FONT_BODY, width=22, show="•")
+        self.pass_entry.pack(side="left")
+        self.pass_entry.bind("<Return>", lambda e: self._login())
+
+        self.show_pw = tk.BooleanVar(value=False)
+        ttk.Checkbutton(body, text="Show password",
+                        variable=self.show_pw,
+                        command=self._toggle_pw).pack(anchor="w", pady=2)
+
+        self.err_lbl = tk.Label(body, text="", font=FONT_SM,
+                                bg=CLR["bg"], fg=CLR["danger"])
+        self.err_lbl.pack(pady=4)
+
+        btn = tk.Button(body, text="  Login  ", command=self._login)
+        style_btn(btn)
+        btn.pack(pady=10)
+
+        self.after(100, self._try_connect)
+
+    def _toggle_pw(self):
+        self.pass_entry.config(show="" if self.show_pw.get() else "•")
+
+    def _try_connect(self):
+        if db.connect():
+            self.db_lbl.config(text="✅ Database connected",
+                                fg=CLR["success"])
+        else:
+            self.db_lbl.config(
+                text="⚠️  Cannot reach database – check config",
+                fg=CLR["danger"])
+
+    def _login(self):
+        username = self.user_var.get().strip()
+        password = self.pass_var.get()
+        if not username:
+            self.err_lbl.config(text="Username is required.")
+            return
+        if not db.conn:
+            self.err_lbl.config(text="No database connection.")
+            return
+        row = db.fetchone(
+            "SELECT Username FROM dbo.Users WHERE Username = ?", (username,))
+        if not row:
+            self.err_lbl.config(text="Invalid username or password.")
+            return
+        plain_match = db.fetchone(
+            "SELECT Username FROM dbo.Users WHERE Username=? AND Password=?",
+            (username, password))
+        if not plain_match:
+            self.err_lbl.config(text="Invalid username or password.")
+            return
+        self.authenticated_user = {"username": username, "name": username}
+        self.destroy()
+
+    def _on_close(self):
+        self.parent.destroy()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DASHBOARD TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class DashboardFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self._build()
+        self.refresh()
+
+    def _build(self):
+        tk.Label(self, text="Dashboard",
+                 font=FONT_H1, bg=CLR["bg"],
+                 fg=CLR["text_dark"]).pack(pady=(20, 10))
+
+        self.tiles_frame = tk.Frame(self, bg=CLR["bg"])
+        self.tiles_frame.pack(pady=10)
+
+        tile_defs = [
+            ("Today's Revenue (KES)",  "today_rev"),
+            ("Total Credit Balance",   "credit_bal"),
+            ("Items in Stock",         "total_items"),
+            ("Suppliers",              "suppliers"),
+        ]
+        self.kpi: dict = {}
+        for i, (label, key) in enumerate(tile_defs):
+            frm = tk.Frame(self.tiles_frame, bg=CLR["accent"],
+                           width=210, height=110, padx=16, pady=12)
+            frm.grid(row=0, column=i, padx=8)
+            frm.pack_propagate(False)
+            self.kpi[key] = tk.Label(frm, text="—",
+                                     font=("Helvetica Neue", 20, "bold"),
+                                     bg=CLR["accent"], fg=CLR["white"])
+            self.kpi[key].pack(expand=True)
+            tk.Label(frm, text=label, font=FONT_SM,
+                     bg=CLR["accent"], fg=CLR["white"],
+                     wraplength=180, justify="center").pack()
+
+        tk.Label(self, text="Recent Sales",
+                 font=FONT_H2, bg=CLR["bg"],
+                 fg=CLR["text_dark"]).pack(anchor="w", padx=20, pady=(20, 4))
+        cols = ["TraNo", "Date", "Cashier", "Type", "Total (KES)", "Sold To"]
+        self.recent_tbl = DataTable(self, cols, height=10)
+        self.recent_tbl.pack(fill="both", expand=True, padx=20, pady=4)
+
+        ref_btn = tk.Button(self, text="🔄 Refresh", command=self.refresh)
+        style_btn(ref_btn)
+        ref_btn.pack(anchor="e", padx=20, pady=8)
+
+    def refresh(self):
+        try:
+            r = db.fetchone(
+                "SELECT SUM(total) FROM dbo.Sale "
+                "WHERE CAST(tradate AS DATE) = CAST(GETDATE() AS DATE)")
+            self.kpi["today_rev"].config(
+                text=f"KES {money(r[0] if r and r[0] else 0)}")
+
+            r = db.fetchone(
+                "SELECT SUM(balance) FROM dbo.Credit_Customer")
+            self.kpi["credit_bal"].config(
+                text=f"KES {money(r[0] if r and r[0] else 0)}")
+
+            r = db.fetchone("SELECT COUNT(*) FROM dbo.Stock_item")
+            self.kpi["total_items"].config(text=str(r[0]) if r else "—")
+
+            r = db.fetchone("SELECT COUNT(*) FROM dbo.Supplier")
+            self.kpi["suppliers"].config(text=str(r[0]) if r else "—")
+
+            _, rows = db.fetchall(
+                "SELECT TOP 15 TraNo, tradate, cashier, tratype, "
+                "total, SoldTo FROM dbo.Sale ORDER BY tradate DESC")
+            fmt = [[r[0], str(r[1])[:10], r[2] or "",
+                    r[3] or "", money(r[4]), r[5] or ""] for r in rows]
+            self.recent_tbl.load(fmt)
+        except Exception as e:
+            print(f"Dashboard error: {e}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TRANSACTIONS TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class TransactionsFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self._build()
+
+    def _build(self):
+        ctrl = tk.Frame(self, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.dfrom = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.dfrom.insert(0, month_start())
+        self.dfrom.pack(side="left", padx=2)
+
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.dto = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.dto.insert(0, today_str())
+        self.dto.pack(side="left", padx=2)
+
+        tk.Label(ctrl, text="Cashier:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left", padx=(8, 0))
+        self.cashier_var = tk.StringVar()
+        ttk.Entry(ctrl, textvariable=self.cashier_var,
+                  font=FONT_SM, width=14).pack(side="left", padx=2)
+
+        load = tk.Button(ctrl, text="📋 Load", command=self._load)
+        style_btn(load)
+        load.pack(side="left", padx=6)
+
+        cols = ["TraNo", "Date", "Time", "Type",
+                "Cashier", "Total (KES)", "VAT (KES)", "Sold To"]
+        self.tbl = DataTable(self, cols)
+        self.tbl.pack(fill="both", expand=True, padx=10, pady=4)
+
+        self.status = tk.Label(self, text="", font=FONT_SM,
+                               bg=CLR["bg"], anchor="w")
+        self.status.pack(fill="x", padx=10)
+        self._load()
+
+    def _load(self):
+        try:
+            d1 = datetime.datetime.strptime(self.dfrom.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.dto.get(), "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        cashier = f"%{self.cashier_var.get().strip()}%"
+        _, rows = db.fetchall(
+            "SELECT TOP 1000 TraNo, tradate, SaleTime, tratype, "
+            "cashier, total, vat, SoldTo "
+            "FROM dbo.Sale "
+            "WHERE tradate BETWEEN ? AND ? AND cashier LIKE ? "
+            "ORDER BY tradate DESC, SaleTime DESC",
+            (d1, d2, cashier))
+        fmt = [[r[0], str(r[1])[:10],
+                str(r[2])[11:19] if r[2] else "",
+                r[3] or "", r[4] or "",
+                money(r[5]), money(r[6]), r[7] or ""] for r in rows]
+        self.tbl.load(fmt)
+        total = sum(float(r[5]) for r in rows if r[5])
+        self.status.config(
+            text=f"{len(rows)} transactions  |  Total: KES {money(total)}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ITEMS TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class ItemsFrame(ttk.Frame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._build()
+        self._load()
+
+    def _build(self):
+        ctrl = tk.Frame(self, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+
+        tk.Label(ctrl, text="Search:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.q = tk.StringVar()
+        e = ttk.Entry(ctrl, textvariable=self.q, font=FONT_BODY, width=26)
+        e.pack(side="left", padx=4)
+        e.bind("<Return>", lambda _: self._load())
+
+        load = tk.Button(ctrl, text="🔍 Search", command=self._load)
+        style_btn(load)
+        load.pack(side="left", padx=2)
+
+        cols = ["ItemId", "Product Code", "Qty", "Price (KES)", "SubTotal (KES)"]
+        self.tbl = DataTable(self, cols)
+        self.tbl.pack(fill="both", expand=True, padx=10, pady=4)
+
+        self.status = tk.Label(self, text="", font=FONT_SM,
+                               bg=CLR["bg"], anchor="w")
+        self.status.pack(fill="x", padx=10)
+
+    def _load(self):
+        q = f"%{self.q.get().strip()}%"
+        try:
+            _, rows = db.fetchall(
+                "SELECT ItemId, PCode, Qty, Price, SubTotal "
+                "FROM dbo.CItem WHERE CAST(PCode AS VARCHAR) LIKE ? "
+                "ORDER BY ItemId", (q,))
+            fmt = [[r[0], r[1] or "", r[2] or "0",
+                    money(r[3]), money(r[4])] for r in rows]
+            self.tbl.load(fmt)
+            self.status.config(text=f"{len(rows)} items found")
+        except Exception as e:
+            self.status.config(text=f"Error: {str(e)[:60]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# CREDIT CUSTOMERS TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class CreditCustomersFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self.selected_customer_id   = None
+        self.selected_customer_name = ""
+        self._build()
+        self._load_customers()
+
+    def _build(self):
+        # ── Customer list ─────────────────────────────────────────────────
+        top = tk.LabelFrame(self, text="Credit Customers",
+                            font=FONT_H2, bg=CLR["bg"],
+                            fg=CLR["text_dark"], padx=6, pady=6)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+
+        ctrl = tk.Frame(top, bg=CLR["bg"])
+        ctrl.pack(fill="x", pady=(0, 4))
+        tk.Label(ctrl, text="Search:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.search_var = tk.StringVar()
+        e = ttk.Entry(ctrl, textvariable=self.search_var,
+                      font=FONT_BODY, width=28)
+        e.pack(side="left", padx=4)
+        e.bind("<Return>", lambda _: self._load_customers())
+        sb = tk.Button(ctrl, text="🔍 Search",
+                       command=self._load_customers)
+        style_btn(sb)
+        sb.pack(side="left", padx=2)
+        rb = tk.Button(ctrl, text="🔄 Refresh",
+                       command=self._load_customers)
+        style_btn(rb)
+        rb.pack(side="left", padx=2)
+
+        cust_cols = ["ID", "Name", "Phone", "Route",
+                     "Balance (KES)", "Credit Period", "Date Due"]
+        self.cust_tbl = DataTable(top, cust_cols, height=6)
+        self.cust_tbl.pack(fill="x")
+        self.cust_tbl.bind_select(self._on_customer_select)
+
+        self.cust_status = tk.Label(top, text="", font=FONT_SM,
+                                    bg=CLR["bg"], anchor="w")
+        self.cust_status.pack(fill="x")
+
+        # ── Bottom split: invoices + payment ──────────────────────────────
+        bottom = tk.Frame(self, bg=CLR["bg"])
+        bottom.pack(fill="both", expand=True, padx=10, pady=4)
+        bottom.columnconfigure(0, weight=3)
+        bottom.columnconfigure(1, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        # Invoices
+        inv_frame = tk.LabelFrame(bottom, text="Invoices / Ledger",
+                                  font=FONT_H2, bg=CLR["bg"],
+                                  fg=CLR["text_dark"], padx=6, pady=6)
+        inv_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        inv_frame.rowconfigure(1, weight=1)
+        inv_frame.columnconfigure(0, weight=1)
+
+        ictl = tk.Frame(inv_frame, bg=CLR["bg"])
+        ictl.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        tk.Label(ictl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.inv_from = ttk.Entry(ictl, font=FONT_SM, width=12)
+        self.inv_from.insert(0, month_start())
+        self.inv_from.pack(side="left", padx=2)
+        tk.Label(ictl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.inv_to = ttk.Entry(ictl, font=FONT_SM, width=12)
+        self.inv_to.insert(0, today_str())
+        self.inv_to.pack(side="left", padx=2)
+        lb = tk.Button(ictl, text="📋 Load",
+                       command=self._load_invoices)
+        style_btn(lb)
+        lb.pack(side="left", padx=4)
+
+        inv_cols = ["RecId", "Date", "Ref No", "Detail",
+                    "Amount (KES)", "Paid (KES)", "Balance (KES)"]
+        self.inv_tbl = DataTable(inv_frame, inv_cols)
+        self.inv_tbl.grid(row=1, column=0, sticky="nsew")
+
+        self.inv_status = tk.Label(inv_frame,
+                                   text="← Select a customer",
+                                   font=FONT_SM, bg=CLR["bg"], anchor="w")
+        self.inv_status.grid(row=2, column=0, sticky="w")
+
+        # Payment panel
+        pay_frame = tk.LabelFrame(bottom, text="Record Payment",
+                                  font=FONT_H2, bg=CLR["bg"],
+                                  fg=CLR["text_dark"], padx=10, pady=10)
+        pay_frame.grid(row=0, column=1, sticky="nsew")
+
+        self.pay_cust_lbl = tk.Label(pay_frame,
+                                     text="No customer selected",
+                                     font=FONT_SM, bg=CLR["bg"],
+                                     fg=CLR["accent"], wraplength=200,
+                                     justify="left")
+        self.pay_cust_lbl.pack(anchor="w", pady=(0, 8))
+
+        fields = [
+            ("Amount (KES):", "pay_amount"),
+            ("Payment Mode:",  "pay_mode"),
+            ("Cheque No:",     "pay_chequeno"),
+            ("Bank:",          "pay_bank"),
+            ("Reference:",     "pay_ref"),
+        ]
+        self.pay_vars = {}
+        for label, key in fields:
+            tk.Label(pay_frame, text=label, font=FONT_SM,
+                     bg=CLR["bg"], anchor="w").pack(fill="x")
+            if key == "pay_mode":
+                var = tk.StringVar(value="CASH")
+                cb = ttk.Combobox(pay_frame, textvariable=var,
+                                  font=FONT_SM, width=22,
+                                  values=["CASH", "CHEQUE", "MPESA",
+                                          "BANK TRANSFER", "OTHER"])
+                cb.pack(fill="x", pady=(0, 6))
+            else:
+                var = tk.StringVar()
+                ttk.Entry(pay_frame, textvariable=var,
+                          font=FONT_SM).pack(fill="x", pady=(0, 6))
+            self.pay_vars[key] = var
+
+        self.pay_bal_lbl = tk.Label(pay_frame, text="",
+                                    font=("Helvetica Neue", 10, "bold"),
+                                    bg=CLR["bg"], fg=CLR["danger"])
+        self.pay_bal_lbl.pack(anchor="w", pady=4)
+
+        pay_btn = tk.Button(pay_frame, text="💳  Save Payment",
+                            command=self._save_payment)
+        style_btn(pay_btn, success=True)
+        pay_btn.pack(fill="x", pady=(8, 2))
+
+        clr_btn = tk.Button(pay_frame, text="✖  Clear",
+                            command=self._clear_payment_form)
+        style_btn(clr_btn, danger=True)
+        clr_btn.pack(fill="x")
+
+    def _load_customers(self):
+        q = f"%{self.search_var.get().strip()}%"
+        try:
+            _, rows = db.fetchall(
+                "SELECT id, name, phone, Route, balance, cperiod, datedue "
+                "FROM dbo.Credit_Customer "
+                "WHERE name LIKE ? OR phone LIKE ? OR Route LIKE ? "
+                "ORDER BY name", (q, q, q))
+            fmt = [[r[0], r[1] or "", r[2] or "", r[3] or "",
+                    money(r[4]), r[5] or "", r[6] or ""] for r in rows]
+            self.cust_tbl.load(fmt)
+            total_bal = sum(float(r[4]) for r in rows if r[4])
+            self.cust_status.config(
+                text=f"{len(rows)} customers  |  "
+                     f"Total Outstanding: KES {money(total_bal)}")
+        except Exception as e:
+            self.cust_status.config(text=f"Error: {str(e)[:80]}")
+
+    def _on_customer_select(self, _event=None):
+        vals = self.cust_tbl.selected_values()
+        if not vals:
+            return
+        self.selected_customer_id   = vals[0]
+        self.selected_customer_name = vals[1]
+        self.pay_cust_lbl.config(
+            text=f"{self.selected_customer_name}\n"
+                 f"(ID: {self.selected_customer_id})")
+        self.pay_bal_lbl.config(
+            text=f"Current Balance: KES {vals[4]}")
+        self._load_invoices()
+
+    def _load_invoices(self):
+        if not self.selected_customer_id:
+            return
+        try:
+            d1 = datetime.datetime.strptime(self.inv_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.inv_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT RecId, TraDate, CRefNo, Detail, "
+                "Amount, Paid, Balance "
+                "FROM dbo.DInv "
+                "WHERE Idno = ? AND TraDate BETWEEN ? AND ? "
+                "ORDER BY TraDate DESC",
+                (self.selected_customer_id, d1, d2))
+            fmt = [[r[0], str(r[1])[:10], r[2] or "", r[3] or "",
+                    money(r[4]), money(r[5]), money(r[6])] for r in rows]
+            self.inv_tbl.load(fmt)
+            total_amt  = sum(float(r[4]) for r in rows if r[4])
+            total_paid = sum(float(r[5]) for r in rows if r[5])
+            total_bal  = sum(float(r[6]) for r in rows if r[6])
+            self.inv_status.config(
+                text=f"{len(rows)} invoices  |  "
+                     f"Total: KES {money(total_amt)}  "
+                     f"Paid: KES {money(total_paid)}  "
+                     f"Bal: KES {money(total_bal)}")
+        except Exception as e:
+            self.inv_status.config(text=f"Error: {str(e)[:80]}")
+
+    def _save_payment(self):
+        if not self.selected_customer_id:
+            messagebox.showwarning("No Customer",
+                                   "Please select a customer first.")
+            return
+        amt_str = self.pay_vars["pay_amount"].get().strip()
+        if not amt_str:
+            messagebox.showwarning("Missing Amount",
+                                   "Please enter a payment amount.")
+            return
+        try:
+            amount = float(amt_str.replace(",", ""))
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid Amount",
+                                 "Amount must be a positive number.")
+            return
+
+        mode     = self.pay_vars["pay_mode"].get().strip() or "CASH"
+        chequeno = self.pay_vars["pay_chequeno"].get().strip() or None
+        bank     = self.pay_vars["pay_bank"].get().strip() or None
+        ref      = self.pay_vars["pay_ref"].get().strip() or None
+        now      = datetime.datetime.now()
+
+        if not messagebox.askyesno(
+                "Confirm Payment",
+                f"Record payment of KES {money(amount)}\n"
+                f"for {self.selected_customer_name}\nvia {mode}?"):
+            return
+        try:
+            row = db.fetchone(
+                "SELECT balance FROM dbo.Credit_Customer WHERE id = ?",
+                (self.selected_customer_id,))
+            current_bal = float(row[0]) if row and row[0] else 0.0
+            new_bal = current_bal - amount
+
+            db.execute(
+                "INSERT INTO dbo.Payment "
+                "(trano, Sid, paydate, amount, bal, paymode, "
+                "chequeno, dbank, ddocno, DoneBy) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (ref, self.selected_customer_id, now, amount,
+                 new_bal, mode, chequeno, bank, ref,
+                 self.current_user))
+
+            db.execute(
+                "UPDATE dbo.Credit_Customer SET balance=? WHERE id=?",
+                (new_bal, self.selected_customer_id))
+
+            messagebox.showinfo(
+                "Payment Saved",
+                f"✅ KES {money(amount)} recorded.\n"
+                f"New Balance: KES {money(new_bal)}")
+            self._clear_payment_form()
+            self._load_customers()
+            self._load_invoices()
+        except Exception as e:
+            messagebox.showerror("Save Error", str(e))
+
+    def _clear_payment_form(self):
+        for key, var in self.pay_vars.items():
+            var.set("CASH" if key == "pay_mode" else "")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SUPPLIERS & PURCHASES TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class SuppliersFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self.selected_supplier_id   = None
+        self.selected_supplier_name = ""
+        self._build()
+        self._load_suppliers()
+
+    def _build(self):
+        # ── Supplier list ─────────────────────────────────────────────────
+        top = tk.LabelFrame(self, text="Suppliers",
+                            font=FONT_H2, bg=CLR["bg"],
+                            fg=CLR["text_dark"], padx=6, pady=6)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+
+        ctrl = tk.Frame(top, bg=CLR["bg"])
+        ctrl.pack(fill="x", pady=(0, 4))
+        tk.Label(ctrl, text="Search:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.s_search = tk.StringVar()
+        e = ttk.Entry(ctrl, textvariable=self.s_search,
+                      font=FONT_BODY, width=28)
+        e.pack(side="left", padx=4)
+        e.bind("<Return>", lambda _: self._load_suppliers())
+        sb = tk.Button(ctrl, text="🔍 Search",
+                       command=self._load_suppliers)
+        style_btn(sb)
+        sb.pack(side="left", padx=2)
+
+        sup_cols = ["ID", "Name", "Tel", "Town",
+                    "Contact Person", "Amount Owing (KES)", "PIN"]
+        self.sup_tbl = DataTable(top, sup_cols, height=6)
+        self.sup_tbl.pack(fill="x")
+        self.sup_tbl.bind_select(self._on_supplier_select)
+
+        self.sup_status = tk.Label(top, text="", font=FONT_SM,
+                                   bg=CLR["bg"], anchor="w")
+        self.sup_status.pack(fill="x")
+
+        # ── Bottom split: invoices + LPOs ────────────────────────────────
+        bottom = tk.Frame(self, bg=CLR["bg"])
+        bottom.pack(fill="both", expand=True, padx=10, pady=4)
+        bottom.columnconfigure(0, weight=1)
+        bottom.columnconfigure(1, weight=1)
+        bottom.rowconfigure(0, weight=1)
+
+        # Supplier invoices (SInv)
+        inv_frame = tk.LabelFrame(bottom, text="Supplier Invoices",
+                                  font=FONT_H2, bg=CLR["bg"],
+                                  fg=CLR["text_dark"], padx=6, pady=6)
+        inv_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        inv_frame.rowconfigure(1, weight=1)
+        inv_frame.columnconfigure(0, weight=1)
+
+        ictl = tk.Frame(inv_frame, bg=CLR["bg"])
+        ictl.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        tk.Label(ictl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sinv_from = ttk.Entry(ictl, font=FONT_SM, width=12)
+        self.sinv_from.insert(0, month_start())
+        self.sinv_from.pack(side="left", padx=2)
+        tk.Label(ictl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sinv_to = ttk.Entry(ictl, font=FONT_SM, width=12)
+        self.sinv_to.insert(0, today_str())
+        self.sinv_to.pack(side="left", padx=2)
+        lb = tk.Button(ictl, text="📋 Load",
+                       command=self._load_sinv)
+        style_btn(lb)
+        lb.pack(side="left", padx=4)
+
+        sinv_cols = ["RecId", "Inv Date", "TraNo", "Detail",
+                     "Inv Amount (KES)", "Paid (KES)", "Balance (KES)"]
+        self.sinv_tbl = DataTable(inv_frame, sinv_cols)
+        self.sinv_tbl.grid(row=1, column=0, sticky="nsew")
+
+        self.sinv_status = tk.Label(inv_frame,
+                                    text="← Select a supplier",
+                                    font=FONT_SM, bg=CLR["bg"], anchor="w")
+        self.sinv_status.grid(row=2, column=0, sticky="w")
+
+        # Stock Replenishments (purchases)
+        rep_frame = tk.LabelFrame(bottom, text="Stock Replenishments / Purchases",
+                                  font=FONT_H2, bg=CLR["bg"],
+                                  fg=CLR["text_dark"], padx=6, pady=6)
+        rep_frame.grid(row=0, column=1, sticky="nsew")
+        rep_frame.rowconfigure(1, weight=1)
+        rep_frame.columnconfigure(0, weight=1)
+
+        rctl = tk.Frame(rep_frame, bg=CLR["bg"])
+        rctl.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        tk.Label(rctl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.rep_from = ttk.Entry(rctl, font=FONT_SM, width=12)
+        self.rep_from.insert(0, month_start())
+        self.rep_from.pack(side="left", padx=2)
+        tk.Label(rctl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.rep_to = ttk.Entry(rctl, font=FONT_SM, width=12)
+        self.rep_to.insert(0, today_str())
+        self.rep_to.pack(side="left", padx=2)
+        rlb = tk.Button(rctl, text="📋 Load",
+                        command=self._load_replenishments)
+        style_btn(rlb)
+        rlb.pack(side="left", padx=4)
+
+        rep_cols = ["TraNo", "Issue Date", "Due Date", "Doc No",
+                    "Amount (KES)", "VAT (KES)", "Mode"]
+        self.rep_tbl = DataTable(rep_frame, rep_cols)
+        self.rep_tbl.grid(row=1, column=0, sticky="nsew")
+
+        self.rep_status = tk.Label(rep_frame,
+                                   text="← Select a supplier",
+                                   font=FONT_SM, bg=CLR["bg"], anchor="w")
+        self.rep_status.grid(row=2, column=0, sticky="w")
+
+    def _load_suppliers(self):
+        q = f"%{self.s_search.get().strip()}%"
+        try:
+            _, rows = db.fetchall(
+                "SELECT supplierid, name, telno, town, "
+                "cperson, AmountOwing, pin "
+                "FROM dbo.Supplier "
+                "WHERE name LIKE ? OR town LIKE ? OR cperson LIKE ? "
+                "ORDER BY name", (q, q, q))
+            fmt = [[r[0], r[1] or "", r[2] or "", r[3] or "",
+                    r[4] or "", money(r[5]), r[6] or ""] for r in rows]
+            self.sup_tbl.load(fmt)
+            total_owe = sum(float(r[5]) for r in rows if r[5])
+            self.sup_status.config(
+                text=f"{len(rows)} suppliers  |  "
+                     f"Total Owing: KES {money(total_owe)}")
+        except Exception as e:
+            self.sup_status.config(text=f"Error: {str(e)[:80]}")
+
+    def _on_supplier_select(self, _event=None):
+        vals = self.sup_tbl.selected_values()
+        if not vals:
+            return
+        self.selected_supplier_id   = vals[0]
+        self.selected_supplier_name = vals[1]
+        self._load_sinv()
+        self._load_replenishments()
+
+    def _load_sinv(self):
+        if not self.selected_supplier_id:
+            return
+        try:
+            d1 = datetime.datetime.strptime(self.sinv_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.sinv_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT RecId, InvDate, TraNo, Detail, "
+                "InvAmount, Paid, Balance "
+                "FROM dbo.SInv "
+                "WHERE SId = ? AND InvDate BETWEEN ? AND ? "
+                "ORDER BY InvDate DESC",
+                (self.selected_supplier_id, d1, d2))
+            fmt = [[r[0], str(r[1])[:10], r[2] or "", r[3] or "",
+                    money(r[4]), money(r[5]), money(r[6])] for r in rows]
+            self.sinv_tbl.load(fmt)
+            total = sum(float(r[6]) for r in rows if r[6])
+            self.sinv_status.config(
+                text=f"{len(rows)} invoices  |  "
+                     f"Outstanding: KES {money(total)}")
+        except Exception as e:
+            self.sinv_status.config(text=f"Error: {str(e)[:80]}")
+
+    def _load_replenishments(self):
+        if not self.selected_supplier_id:
+            return
+        try:
+            d1 = datetime.datetime.strptime(self.rep_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.rep_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT trano, issuedate, datedue, docno, "
+                "amount, vatamount, dmode "
+                "FROM dbo.Stock_Replenish "
+                "WHERE sid = ? AND issuedate BETWEEN ? AND ? "
+                "ORDER BY issuedate DESC",
+                (self.selected_supplier_id, d1, d2))
+            fmt = [[r[0], str(r[1])[:10], str(r[2])[:10] if r[2] else "",
+                    r[3] or "", money(r[4]), money(r[5]),
+                    r[6] or ""] for r in rows]
+            self.rep_tbl.load(fmt)
+            total = sum(float(r[4]) for r in rows if r[4])
+            self.rep_status.config(
+                text=f"{len(rows)} replenishments  |  "
+                     f"Total: KES {money(total)}")
+        except Exception as e:
+            self.rep_status.config(text=f"Error: {str(e)[:80]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# INVENTORY & STOCK TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class InventoryFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self._build()
+        self._load_stock()
+
+    def _build(self):
+        # Notebook inside tab for sub-sections
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # ── Stock Items ───────────────────────────────────────────────────
+        stock_tab = ttk.Frame(nb)
+        nb.add(stock_tab, text="  📦 Stock Items  ")
+        self._build_stock_tab(stock_tab)
+
+        # ── Stock Card (movement) ─────────────────────────────────────────
+        scard_tab = ttk.Frame(nb)
+        nb.add(scard_tab, text="  📋 Stock Card  ")
+        self._build_scard_tab(scard_tab)
+
+        # ── Damaged Stock ─────────────────────────────────────────────────
+        dmg_tab = ttk.Frame(nb)
+        nb.add(dmg_tab, text="  ⚠️ Damaged Stock  ")
+        self._build_damaged_tab(dmg_tab)
+
+        # ── Expiry ────────────────────────────────────────────────────────
+        exp_tab = ttk.Frame(nb)
+        nb.add(exp_tab, text="  🗓️ Expiry  ")
+        self._build_expiry_tab(exp_tab)
+
+    # ── Stock Items ───────────────────────────────────────────────────────
+    def _build_stock_tab(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="Search:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.stock_q = tk.StringVar()
+        e = ttk.Entry(ctrl, textvariable=self.stock_q,
+                      font=FONT_BODY, width=28)
+        e.pack(side="left", padx=4)
+        e.bind("<Return>", lambda _: self._load_stock())
+
+        tk.Label(ctrl, text="Category:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left", padx=(8, 0))
+        self.stock_cat = tk.StringVar()
+        ttk.Entry(ctrl, textvariable=self.stock_cat,
+                  font=FONT_SM, width=14).pack(side="left", padx=2)
+
+        lb = tk.Button(ctrl, text="🔍 Search", command=self._load_stock)
+        style_btn(lb)
+        lb.pack(side="left", padx=2)
+
+        tk.Label(ctrl, text="  Show:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.low_stock_var = tk.BooleanVar()
+        ttk.Checkbutton(ctrl, text="Low Stock Only",
+                        variable=self.low_stock_var,
+                        command=self._load_stock).pack(side="left")
+
+        cols = ["PCode", "Name", "Category", "Qty Stock",
+                "Re-Order Level", "Buy Price (KES)",
+                "Sale Price (KES)", "Wholesale (KES)", "VAT"]
+        self.stock_tbl = DataTable(parent, cols)
+        self.stock_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+
+        self.stock_status = tk.Label(parent, text="", font=FONT_SM,
+                                     bg=CLR["bg"], anchor="w")
+        self.stock_status.pack(fill="x", padx=10)
+
+    def _load_stock(self):
+        q   = f"%{self.stock_q.get().strip()}%"
+        cat = f"%{self.stock_cat.get().strip()}%"
+        low = self.low_stock_var.get()
+        extra = "AND qtystock <= RLevel" if low else ""
+        try:
+            _, rows = db.fetchall(
+                f"SELECT pcode, name, PCategory, qtystock, RLevel, "
+                f"bpw, spw, spr, vat "
+                f"FROM dbo.Stock_item "
+                f"WHERE (name LIKE ? OR CAST(pcode AS VARCHAR) LIKE ?) "
+                f"AND PCategory LIKE ? {extra} "
+                f"ORDER BY name",
+                (q, q, cat))
+            fmt = [[r[0], r[1] or "", r[2] or "",
+                    r[3] or 0, r[4] or 0,
+                    money(r[5]), money(r[6]),
+                    money(r[7]), r[8] or ""] for r in rows]
+            self.stock_tbl.load(fmt)
+            self.stock_status.config(
+                text=f"{len(rows)} items found"
+                     + ("  ⚠️  Low stock filter ON" if low else ""))
+        except Exception as e:
+            self.stock_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Stock Card ────────────────────────────────────────────────────────
+    def _build_scard_tab(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="Product Code:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sc_pcode = tk.StringVar()
+        ttk.Entry(ctrl, textvariable=self.sc_pcode,
+                  font=FONT_SM, width=14).pack(side="left", padx=4)
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sc_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.sc_from.insert(0, month_start())
+        self.sc_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sc_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.sc_to.insert(0, today_str())
+        self.sc_to.pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load", command=self._load_scard)
+        style_btn(lb)
+        lb.pack(side="left", padx=4)
+
+        cols = ["RecId", "Date", "Narration", "Category",
+                "Qty In", "Qty Out", "New Qty", "Done By"]
+        self.sc_tbl = DataTable(parent, cols)
+        self.sc_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.sc_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.sc_status.pack(fill="x", padx=10)
+
+    def _load_scard(self):
+        pcode = self.sc_pcode.get().strip()
+        if not pcode:
+            messagebox.showwarning("Missing", "Enter a product code.")
+            return
+        try:
+            d1 = datetime.datetime.strptime(self.sc_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.sc_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT RecId, MDate, Narration, Category, "
+                "QIn, QOut, NewQty, DBy "
+                "FROM dbo.SCard "
+                "WHERE PCode = ? AND MDate BETWEEN ? AND ? "
+                "ORDER BY MDate DESC",
+                (pcode, d1, d2))
+            fmt = [[r[0], str(r[1])[:10], r[2] or "", r[3] or "",
+                    r[4] or 0, r[5] or 0, r[6] or 0,
+                    r[7] or ""] for r in rows]
+            self.sc_tbl.load(fmt)
+            self.sc_status.config(text=f"{len(rows)} movements")
+        except Exception as e:
+            self.sc_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Damaged Stock ─────────────────────────────────────────────────────
+    def _build_damaged_tab(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.dmg_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.dmg_from.insert(0, month_start())
+        self.dmg_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.dmg_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.dmg_to.insert(0, today_str())
+        self.dmg_to.pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load", command=self._load_damaged)
+        style_btn(lb)
+        lb.pack(side="left", padx=4)
+
+        cols = ["RecNo", "Item Code", "Item Name", "Qty",
+                "Date", "Buy Price (KES)", "Narration", "Entered By"]
+        self.dmg_tbl = DataTable(parent, cols)
+        self.dmg_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.dmg_status = tk.Label(parent, text="", font=FONT_SM,
+                                   bg=CLR["bg"], anchor="w")
+        self.dmg_status.pack(fill="x", padx=10)
+        self._load_damaged()
+
+    def _load_damaged(self):
+        try:
+            d1 = datetime.datetime.strptime(self.dmg_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.dmg_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT RecNo, ItemCode, ItemName, Qty, "
+                "DDate, BP, Narration, EnteredBy "
+                "FROM dbo.DamagedStock "
+                "WHERE DDate BETWEEN ? AND ? "
+                "ORDER BY DDate DESC", (d1, d2))
+            fmt = [[r[0], r[1], r[2] or "", r[3] or 0,
+                    str(r[4])[:10], money(r[5]),
+                    r[6] or "", r[7] or ""] for r in rows]
+            self.dmg_tbl.load(fmt)
+            total_loss = sum(
+                float(r[3]) * float(r[5])
+                for r in rows if r[3] and r[5])
+            self.dmg_status.config(
+                text=f"{len(rows)} records  |  "
+                     f"Est. Loss: KES {money(total_loss)}")
+        except Exception as e:
+            self.dmg_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Expiry ────────────────────────────────────────────────────────────
+    def _build_expiry_tab(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="Expiry Before:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.exp_before = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        # Default: 3 months ahead
+        ahead = (datetime.date.today() +
+                 datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+        self.exp_before.insert(0, ahead)
+        self.exp_before.pack(side="left", padx=4)
+        lb = tk.Button(ctrl, text="📋 Load", command=self._load_expiry)
+        style_btn(lb)
+        lb.pack(side="left", padx=4)
+
+        cols = ["RecId", "Batch No", "PCode", "Mfg Date",
+                "Expiry Date", "Qty", "Done By", "TraNo"]
+        self.exp_tbl = DataTable(parent, cols)
+        self.exp_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.exp_status = tk.Label(parent, text="", font=FONT_SM,
+                                   bg=CLR["bg"], anchor="w")
+        self.exp_status.pack(fill="x", padx=10)
+        self._load_expiry()
+
+    def _load_expiry(self):
+        try:
+            d = datetime.datetime.strptime(
+                self.exp_before.get(), "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Date must be YYYY-MM-DD.")
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT RecId, BatchNo, PCode, MDate, "
+                "EDate, Qty, DoneBy, TraNo "
+                "FROM dbo.Expiry "
+                "WHERE EDate <= ? "
+                "ORDER BY EDate ASC", (d,))
+            fmt = [[r[0], r[1] or "", r[2],
+                    str(r[3])[:10] if r[3] else "",
+                    str(r[4])[:10] if r[4] else "",
+                    r[5] or 0, r[6] or "", r[7] or ""] for r in rows]
+            self.exp_tbl.load(fmt)
+            self.exp_status.config(
+                text=f"{len(rows)} items expiring on or before "
+                     f"{self.exp_before.get()}")
+        except Exception as e:
+            self.exp_status.config(text=f"Error: {str(e)[:80]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAYMENTS & RECEIPTS TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class PaymentsFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self._build()
+
+    def _build(self):
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Customer payments received
+        cust_tab = ttk.Frame(nb)
+        nb.add(cust_tab, text="  💰 Customer Payments  ")
+        self._build_cust_payments(cust_tab)
+
+        # Supplier payments made
+        sup_tab = ttk.Frame(nb)
+        nb.add(sup_tab, text="  🏦 Supplier Payments  ")
+        self._build_sup_payments(sup_tab)
+
+        # Cash book
+        cb_tab = ttk.Frame(nb)
+        nb.add(cb_tab, text="  📒 Cash Book  ")
+        self._build_cashbook(cb_tab)
+
+    def _build_cust_payments(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.cp_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.cp_from.insert(0, month_start())
+        self.cp_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.cp_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.cp_to.insert(0, today_str())
+        self.cp_to.pack(side="left", padx=2)
+        tk.Label(ctrl, text="Mode:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left", padx=(8, 0))
+        self.cp_mode = tk.StringVar()
+        ttk.Combobox(ctrl, textvariable=self.cp_mode,
+                     font=FONT_SM, width=14,
+                     values=["", "CASH", "CHEQUE", "MPESA",
+                             "BANK TRANSFER",
+                             "OTHER"]).pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load",
+                       command=self._load_cust_payments)
+        style_btn(lb)
+        lb.pack(side="left", padx=6)
+
+        cols = ["PayNo", "Date", "Cust ID", "Amount (KES)",
+                "Balance (KES)", "Mode", "Cheque No", "Bank", "Done By"]
+        self.cp_tbl = DataTable(parent, cols)
+        self.cp_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+
+        self.cp_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.cp_status.pack(fill="x", padx=10)
+        self._load_cust_payments()
+
+    def _load_cust_payments(self):
+        try:
+            d1 = datetime.datetime.strptime(self.cp_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.cp_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        mode = self.cp_mode.get().strip()
+        extra = "AND paymode = ?" if mode else ""
+        params = (d1, d2, mode) if mode else (d1, d2)
+        try:
+            _, rows = db.fetchall(
+                f"SELECT payno, paydate, Sid, amount, bal, "
+                f"paymode, chequeno, dbank, DoneBy "
+                f"FROM dbo.Payment "
+                f"WHERE paydate BETWEEN ? AND ? {extra} "
+                f"ORDER BY paydate DESC", params)
+            fmt = [[r[0], str(r[1])[:10], r[2],
+                    money(r[3]), money(r[4]),
+                    r[5] or "", r[6] or "",
+                    r[7] or "", r[8] or ""] for r in rows]
+            self.cp_tbl.load(fmt)
+            total = sum(float(r[3]) for r in rows if r[3])
+            self.cp_status.config(
+                text=f"{len(rows)} payments  |  "
+                     f"Total Received: KES {money(total)}")
+        except Exception as e:
+            self.cp_status.config(text=f"Error: {str(e)[:80]}")
+
+    def _build_sup_payments(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sp_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.sp_from.insert(0, month_start())
+        self.sp_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.sp_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.sp_to.insert(0, today_str())
+        self.sp_to.pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load",
+                       command=self._load_sup_payments)
+        style_btn(lb)
+        lb.pack(side="left", padx=6)
+
+        cols = ["PayNo", "Date", "Supplier ID", "Amount (KES)",
+                "Mode", "Cheque No", "Bank Acc", "Done By"]
+        self.sp_tbl = DataTable(parent, cols)
+        self.sp_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+
+        self.sp_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.sp_status.pack(fill="x", padx=10)
+        self._load_sup_payments()
+
+    def _load_sup_payments(self):
+        try:
+            d1 = datetime.datetime.strptime(self.sp_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.sp_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT PayNo, PDATE, SID, AMT, "
+                "PMODE, CQNO, TBANK, DBY "
+                "FROM dbo.SPay "
+                "WHERE PDATE BETWEEN ? AND ? "
+                "ORDER BY PDATE DESC", (d1, d2))
+            fmt = [[r[0], str(r[1])[:10], r[2],
+                    money(r[3]), r[4] or "",
+                    r[5] or "", r[6] or "",
+                    r[7] or ""] for r in rows]
+            self.sp_tbl.load(fmt)
+            total = sum(float(r[3]) for r in rows if r[3])
+            self.sp_status.config(
+                text=f"{len(rows)} payments  |  "
+                     f"Total Paid Out: KES {money(total)}")
+        except Exception as e:
+            self.sp_status.config(text=f"Error: {str(e)[:80]}")
+
+    def _build_cashbook(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.cb_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.cb_from.insert(0, month_start())
+        self.cb_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.cb_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.cb_to.insert(0, today_str())
+        self.cb_to.pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load",
+                       command=self._load_cashbook)
+        style_btn(lb)
+        lb.pack(side="left", padx=6)
+
+        cols = ["RecId", "Date", "Time", "Category",
+                "Category2", "Cash In (KES)", "Cash Out (KES)",
+                "Bank In (KES)", "Bank Out (KES)", "Done By"]
+        self.cb_tbl = DataTable(parent, cols)
+        self.cb_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+
+        self.cb_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.cb_status.pack(fill="x", padx=10)
+        self._load_cashbook()
+
+    def _load_cashbook(self):
+        try:
+            d1 = datetime.datetime.strptime(self.cb_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.cb_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT recid, Dt, Tm, MCat, MCat2, "
+                "cin, cout, bin, bout, dby "
+                "FROM dbo.CB "
+                "WHERE Dt BETWEEN ? AND ? "
+                "ORDER BY Dt DESC, Tm DESC", (d1, d2))
+            fmt = [[r[0], str(r[1])[:10],
+                    str(r[2])[11:19] if r[2] else "",
+                    r[3] or "", r[4] or "",
+                    money(r[5]), money(r[6]),
+                    money(r[7]), money(r[8]),
+                    r[9] or ""] for r in rows]
+            self.cb_tbl.load(fmt)
+            total_in  = sum(float(r[5]) for r in rows if r[5])
+            total_out = sum(float(r[6]) for r in rows if r[6])
+            self.cb_status.config(
+                text=f"{len(rows)} entries  |  "
+                     f"Cash In: KES {money(total_in)}  |  "
+                     f"Cash Out: KES {money(total_out)}")
+        except Exception as e:
+            self.cb_status.config(text=f"Error: {str(e)[:80]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# REPORTS TAB
+# ═════════════════════════════════════════════════════════════════════════════
+class ReportsFrame(ttk.Frame):
+    def __init__(self, parent, current_user: str):
+        super().__init__(parent)
+        self.current_user = current_user
+        self._build()
+
+    def _build(self):
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Sales summary
+        ss_tab = ttk.Frame(nb)
+        nb.add(ss_tab, text="  📊 Sales Summary  ")
+        self._build_sales_summary(ss_tab)
+
+        # Trading account
+        tr_tab = ttk.Frame(nb)
+        nb.add(tr_tab, text="  📈 Trading Account  ")
+        self._build_trading(tr_tab)
+
+        # Reconcile
+        rec_tab = ttk.Frame(nb)
+        nb.add(rec_tab, text="  🔁 Reconcile  ")
+        self._build_reconcile(rec_tab)
+
+        # Debtor ageing
+        age_tab = ttk.Frame(nb)
+        nb.add(age_tab, text="  👥 Debtor Ageing  ")
+        self._build_ageing(age_tab)
+
+        # Vote transactions
+        vote_tab = ttk.Frame(nb)
+        nb.add(vote_tab, text="  🗒️ Vote Transactions  ")
+        self._build_vote(vote_tab)
+
+    # ── Sales Summary ─────────────────────────────────────────────────────
+    def _build_sales_summary(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.ss_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.ss_from.insert(0, month_start())
+        self.ss_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.ss_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.ss_to.insert(0, today_str())
+        self.ss_to.pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Generate",
+                       command=self._load_sales_summary)
+        style_btn(lb)
+        lb.pack(side="left", padx=6)
+
+        # KPI bar
+        self.ss_kpi = tk.Frame(parent, bg=CLR["bg"])
+        self.ss_kpi.pack(fill="x", padx=10, pady=4)
+        self.ss_kpi_labels = {}
+        for i, (key, label) in enumerate([
+            ("total_sales",  "Total Sales (KES)"),
+            ("total_vat",    "Total VAT (KES)"),
+            ("num_sales",    "No. of Sales"),
+            ("credit_sales", "Credit Sales (KES)"),
+        ]):
+            f = tk.Frame(self.ss_kpi, bg=CLR["accent"],
+                         width=200, height=70, padx=10, pady=6)
+            f.grid(row=0, column=i, padx=6)
+            f.pack_propagate(False)
+            lbl = tk.Label(f, text="—",
+                           font=("Helvetica Neue", 16, "bold"),
+                           bg=CLR["accent"], fg=CLR["white"])
+            lbl.pack(expand=True)
+            tk.Label(f, text=label, font=FONT_SM,
+                     bg=CLR["accent"], fg=CLR["white"]).pack()
+            self.ss_kpi_labels[key] = lbl
+
+        cols = ["Date", "TraNo", "Type", "Cashier",
+                "Total (KES)", "VAT (KES)", "Sold To"]
+        self.ss_tbl = DataTable(parent, cols)
+        self.ss_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.ss_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.ss_status.pack(fill="x", padx=10)
+
+    def _load_sales_summary(self):
+        try:
+            d1 = datetime.datetime.strptime(self.ss_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.ss_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT tradate, TraNo, tratype, cashier, "
+                "total, vat, SoldTo "
+                "FROM dbo.Sale "
+                "WHERE tradate BETWEEN ? AND ? "
+                "ORDER BY tradate DESC", (d1, d2))
+            fmt = [[str(r[0])[:10], r[1], r[2] or "",
+                    r[3] or "", money(r[4]),
+                    money(r[5]), r[6] or ""] for r in rows]
+            self.ss_tbl.load(fmt)
+
+            total_sales  = sum(float(r[4]) for r in rows if r[4])
+            total_vat    = sum(float(r[5]) for r in rows if r[5])
+            credit_sales = sum(
+                float(r[4]) for r in rows
+                if r[4] and r[2] and "credit" in str(r[2]).lower())
+
+            self.ss_kpi_labels["total_sales"].config(
+                text=f"KES {money(total_sales)}")
+            self.ss_kpi_labels["total_vat"].config(
+                text=f"KES {money(total_vat)}")
+            self.ss_kpi_labels["num_sales"].config(text=str(len(rows)))
+            self.ss_kpi_labels["credit_sales"].config(
+                text=f"KES {money(credit_sales)}")
+            self.ss_status.config(
+                text=f"{len(rows)} sales  |  "
+                     f"Total: KES {money(total_sales)}")
+        except Exception as e:
+            self.ss_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Trading Account ───────────────────────────────────────────────────
+    def _build_trading(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        lb = tk.Button(ctrl, text="📋 Load Trading Accounts",
+                       command=self._load_trading)
+        style_btn(lb)
+        lb.pack(side="left")
+
+        cols = ["Start Date", "End Date", "Sales (KES)",
+                "Purchases (KES)", "Cost of Goods (KES)",
+                "Gross Profit (KES)", "Opening Stock (KES)",
+                "Closing Stock (KES)"]
+        self.tr_tbl = DataTable(parent, cols)
+        self.tr_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.tr_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.tr_status.pack(fill="x", padx=10)
+        self._load_trading()
+
+    def _load_trading(self):
+        try:
+            _, rows = db.fetchall(
+                "SELECT StartDate, EndDate, Sales, Purchases, "
+                "CostOfGoods, GrossProfit, OpeningStock, ClosingStock "
+                "FROM dbo.Trading ORDER BY StartDate DESC")
+            fmt = [[str(r[0])[:10], str(r[1])[:10],
+                    money(r[2]), money(r[3]), money(r[4]),
+                    money(r[5]), money(r[6]),
+                    money(r[7])] for r in rows]
+            self.tr_tbl.load(fmt)
+            self.tr_status.config(text=f"{len(rows)} period(s) found")
+        except Exception as e:
+            self.tr_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Reconcile ─────────────────────────────────────────────────────────
+    def _build_reconcile(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.rc_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.rc_from.insert(0, month_start())
+        self.rc_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.rc_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.rc_to.insert(0, today_str())
+        self.rc_to.pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load",
+                       command=self._load_reconcile)
+        style_btn(lb)
+        lb.pack(side="left", padx=6)
+
+        cols = ["Date", "Cash Sales (KES)", "Credit Sales (KES)",
+                "Invoices (KES)", "Expenses (KES)",
+                "Net Cash (KES)", "Banked (KES)",
+                "Surplus/Deficit (KES)", "Comment"]
+        self.rc_tbl = DataTable(parent, cols)
+        self.rc_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.rc_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.rc_status.pack(fill="x", padx=10)
+        self._load_reconcile()
+
+    def _load_reconcile(self):
+        try:
+            d1 = datetime.datetime.strptime(self.rc_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.rc_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            return
+        try:
+            _, rows = db.fetchall(
+                "SELECT TraDate, CashSale, CreditSale, "
+                "Invoices, Expenses, NetCash, "
+                "Banked, DefSurp, Comment "
+                "FROM dbo.Reconcile "
+                "WHERE TraDate BETWEEN ? AND ? "
+                "ORDER BY TraDate DESC", (d1, d2))
+            fmt = [[str(r[0])[:10], money(r[1]), money(r[2]),
+                    money(r[3]), money(r[4]), money(r[5]),
+                    money(r[6]), money(r[7]),
+                    r[8] or ""] for r in rows]
+            self.rc_tbl.load(fmt)
+            self.rc_status.config(text=f"{len(rows)} reconciliation records")
+        except Exception as e:
+            self.rc_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Debtor Ageing ─────────────────────────────────────────────────────
+    def _build_ageing(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        lb = tk.Button(ctrl, text="📋 Load Debtor Ageing",
+                       command=self._load_ageing)
+        style_btn(lb)
+        lb.pack(side="left")
+
+        cols = ["Cust ID", "0-30 Days (KES)", "31-60 Days (KES)",
+                "61-90 Days (KES)", "91-120 Days (KES)",
+                "Over 120 (KES)", "Total (KES)", "Unallocated (KES)"]
+        self.age_tbl = DataTable(parent, cols)
+        self.age_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.age_status = tk.Label(parent, text="", font=FONT_SM,
+                                   bg=CLR["bg"], anchor="w")
+        self.age_status.pack(fill="x", padx=10)
+        self._load_ageing()
+
+    def _load_ageing(self):
+        try:
+            _, rows = db.fetchall(
+                "SELECT sid, a30, a60, a90, a120, aover, atotal, UB "
+                "FROM dbo.SDAS ORDER BY atotal DESC")
+            fmt = [[r[0], money(r[1]), money(r[2]), money(r[3]),
+                    money(r[4]), money(r[5]), money(r[6]),
+                    money(r[7])] for r in rows]
+            self.age_tbl.load(fmt)
+            grand = sum(float(r[6]) for r in rows if r[6])
+            self.age_status.config(
+                text=f"{len(rows)} debtors  |  "
+                     f"Grand Total: KES {money(grand)}")
+        except Exception as e:
+            self.age_status.config(text=f"Error: {str(e)[:80]}")
+
+    # ── Vote Transactions ─────────────────────────────────────────────────
+    def _build_vote(self, parent):
+        ctrl = tk.Frame(parent, bg=CLR["bg"], padx=10, pady=8)
+        ctrl.pack(fill="x")
+        tk.Label(ctrl, text="From:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.vt_from = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.vt_from.insert(0, month_start())
+        self.vt_from.pack(side="left", padx=2)
+        tk.Label(ctrl, text="To:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left")
+        self.vt_to = ttk.Entry(ctrl, font=FONT_SM, width=12)
+        self.vt_to.insert(0, today_str())
+        self.vt_to.pack(side="left", padx=2)
+        tk.Label(ctrl, text="Votehead:", font=FONT_SM,
+                 bg=CLR["bg"]).pack(side="left", padx=(8, 0))
+        self.vt_vh = tk.StringVar()
+        ttk.Entry(ctrl, textvariable=self.vt_vh,
+                  font=FONT_SM, width=16).pack(side="left", padx=2)
+        lb = tk.Button(ctrl, text="📋 Load",
+                       command=self._load_vote)
+        style_btn(lb)
+        lb.pack(side="left", padx=6)
+
+        cols = ["RecNo", "Date", "Votehead", "Narration",
+                "CR (KES)", "DR (KES)", "Type"]
+        self.vt_tbl = DataTable(parent, cols)
+        self.vt_tbl.pack(fill="both", expand=True, padx=10, pady=4)
+        self.vt_status = tk.Label(parent, text="", font=FONT_SM,
+                                  bg=CLR["bg"], anchor="w")
+        self.vt_status.pack(fill="x", padx=10)
+
+    def _load_vote(self):
+        try:
+            d1 = datetime.datetime.strptime(self.vt_from.get(), "%Y-%m-%d")
+            d2 = datetime.datetime.strptime(self.vt_to.get(),   "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Date Error", "Dates must be YYYY-MM-DD.")
+            return
+        vh = f"%{self.vt_vh.get().strip()}%"
+        try:
+            _, rows = db.fetchall(
+                "SELECT TOP 1000 RecNo, TraDate, Votehead, "
+                "Narration, CR, DR, PT "
+                "FROM dbo.VoteT "
+                "WHERE TraDate BETWEEN ? AND ? "
+                "AND Votehead LIKE ? "
+                "ORDER BY TraDate DESC", (d1, d2, vh))
+            fmt = [[r[0], str(r[1])[:10], r[2] or "",
+                    r[3] or "", money(r[4]),
+                    money(r[5]), r[6] or ""] for r in rows]
+            self.vt_tbl.load(fmt)
+            total_cr = sum(float(r[4]) for r in rows if r[4])
+            total_dr = sum(float(r[5]) for r in rows if r[5])
+            self.vt_status.config(
+                text=f"{len(rows)} entries  |  "
+                     f"CR: KES {money(total_cr)}  "
+                     f"DR: KES {money(total_dr)}")
+        except Exception as e:
+            self.vt_status.config(text=f"Error: {str(e)[:80]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MAIN APPLICATION WINDOW
+# ═════════════════════════════════════════════════════════════════════════════
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.withdraw()
+        self.title("FarmersDesk Ltd – Desktop Application")
+        self.configure(bg=CLR["bg"])
+        self.geometry("1280x780")
+        self.minsize(1000, 650)
+
+        s = ttk.Style(self)
+        s.theme_use("clam")
+        s.configure("TFrame",      background=CLR["bg"])
+        s.configure("TNotebook",   background=CLR["bg"])
+        s.configure("TNotebook.Tab",
+                    font=FONT_SM, padding=[12, 5],
+                    background=CLR["border"],
+                    foreground=CLR["text_dark"])
+        s.map("TNotebook.Tab",
+              background=[("selected", CLR["accent"])],
+              foreground=[("selected", CLR["white"])])
+
+        self._show_login()
+
+    def _show_login(self):
+        login = LoginWindow(self)
+        self.wait_window(login)
+        if not login.authenticated_user:
+            self.destroy()
+            return
+        self.current_user = login.authenticated_user
+        self._build_main()
+        self.deiconify()
+        self._center()
+
+    def _center(self):
+        w, h = 1280, 780
+        self.geometry(f"{w}x{h}+"
+                      f"{(self.winfo_screenwidth()-w)//2}+"
+                      f"{(self.winfo_screenheight()-h)//2}")
+
+    def _build_main(self):
+        uname = self.current_user["name"]
+
+        # Header
+        hdr = tk.Frame(self, bg=CLR["header"], height=56)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="🌾  FarmersDesk Ltd",
+                 font=FONT_H1, bg=CLR["header"],
+                 fg=CLR["white"]).pack(side="left", padx=20)
+        tk.Label(hdr,
+                 text=f"👤  {uname}   |   "
+                      f"{datetime.date.today().strftime('%d %b %Y')}",
+                 font=FONT_SM, bg=CLR["header"],
+                 fg=CLR["white"]).pack(side="right", padx=20)
+
+        # Tabs
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=4, pady=4)
+
+        tabs = [
+            ("🏠 Dashboard",           DashboardFrame,        (uname,)),
+            ("💳 Transactions",        TransactionsFrame,     (uname,)),
+            ("📦 Items",               ItemsFrame,            ()),
+            ("👥 Credit Customers",    CreditCustomersFrame,  (uname,)),
+            ("🏭 Suppliers",           SuppliersFrame,        (uname,)),
+            ("🗄️ Inventory",           InventoryFrame,        (uname,)),
+            ("💰 Payments",            PaymentsFrame,         (uname,)),
+            ("📊 Reports",             ReportsFrame,          (uname,)),
+        ]
+        for label, FrameClass, args in tabs:
+            frame = FrameClass(nb, *args)
+            frame.configure(style="TFrame")
+            nb.add(frame, text=f"  {label}  ")
+
+        # Status bar
+        sb = tk.Frame(self, bg=CLR["border"], height=22)
+        sb.pack(fill="x", side="bottom")
+        sb.pack_propagate(False)
+        tk.Label(sb,
+                 text=(f"  Connected: {DB_CONFIG['server']} / "
+                       f"{DB_CONFIG['database']}   |   "
+                       f"User: {uname}"),
+                 font=FONT_SM, bg=CLR["border"],
+                 fg=CLR["text_dark"]).pack(side="left")
+
+    def on_close(self):
+        db.close()
+        self.destroy()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ═════════════════════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    app = App()
+    app.protocol("WM_DELETE_WINDOW", app.on_close)
+    app.mainloop()
+

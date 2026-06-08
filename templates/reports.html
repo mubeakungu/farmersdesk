@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reports - FarmersDeskLtd POS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; }
+        .navbar { background: #333; color: white; padding: 15px; display: flex; justify-content: space-between; }
+        .navbar a { color: white; text-decoration: none; margin-left: 20px; cursor: pointer; }
+        .container { padding: 30px; max-width: 1000px; margin: 0 auto; }
+        .report-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        h2 { color: #333; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        thead { background: #f9f9f9; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { font-weight: bold; color: #333; }
+        tr:hover { background: #f5f5f5; }
+        .empty { color: #999; text-align: center; padding: 40px; }
+        .summary { background: #f0f0f0; padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .summary-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #ddd; }
+        .summary-row:last-child { border-bottom: none; }
+        .btn { padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; display: inline-block; margin-bottom: 20px; }
+        .btn:hover { background: #764ba2; }
+        .print-btn { background: #4caf50; }
+        .print-btn:hover { background: #45a049; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>🏪 FarmersDeskLtd POS</h1>
+        <a href="/dashboard">← Back to Dashboard</a>
+    </div>
+    
+    <div class="container">
+        <div class="report-card">
+            <h2>📊 Daily Transactions Report</h2>
+            <a href="/dashboard" class="btn">← Back</a>
+            <button onclick="window.print()" class="btn print-btn">🖨️ Print Report</button>
+            
+            {% if transactions %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for transaction in transactions %}
+                    <tr>
+                        <td>{{ transaction[0] }}</td>
+                        <td>${{ "%.2f"|format(transaction[1]) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            <div class="summary">
+                <div class="summary-row">
+                    <span><strong>Total Transactions:</strong></span>
+                    <span><strong>{{ total_count }}</strong></span>
+                </div>
+                <div class="summary-row">
+                    <span style="font-size: 16px;"><strong>Total Revenue:</strong></span>
+                    <span style="font-size: 16px; color: #667eea;"><strong>${{ "%.2f"|format(total_sales) }}</strong></span>
+                </div>
+                <div class="summary-row">
+                    <span><strong>Average Transaction:</strong></span>
+                    <span><strong>${{ "%.2f"|format(total_sales / total_count if total_count > 0 else 0) }}</strong></span>
+                </div>
+            </div>
+            {% else %}
+            <div class="empty">No transactions recorded today</div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

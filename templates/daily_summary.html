@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Daily Summary - FarmersDeskLtd POS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; }
+        .navbar { background: #333; color: white; padding: 15px; display: flex; justify-content: space-between; }
+        .navbar a { color: white; text-decoration: none; margin-left: 20px; cursor: pointer; }
+        .container { padding: 30px; max-width: 900px; margin: 0 auto; }
+        .summary-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h2 { color: #333; margin-bottom: 20px; }
+        .metric { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+        .metric-box { background: #f9f9f9; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; }
+        .metric-label { color: #999; font-size: 14px; margin-bottom: 10px; }
+        .metric-value { font-size: 28px; font-weight: bold; color: #333; }
+        .metric-value.primary { color: #667eea; }
+        .metric-value.success { color: #4caf50; }
+        .metric-value.info { color: #2196F3; }
+        .btn { padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; display: inline-block; margin-bottom: 20px; }
+        .btn:hover { background: #764ba2; }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h1>🏪 FarmersDeskLtd POS</h1>
+        <a href="/dashboard">← Back to Dashboard</a>
+    </div>
+    
+    <div class="container">
+        <div class="summary-card">
+            <h2>📈 Daily Summary & Statistics</h2>
+            <a href="/dashboard" class="btn">← Back</a>
+            
+            <div class="metric">
+                <div class="metric-box">
+                    <div class="metric-label">Total Transactions</div>
+                    <div class="metric-value primary">{{ trans_count }}</div>
+                </div>
+                
+                <div class="metric-box">
+                    <div class="metric-label">Total Revenue</div>
+                    <div class="metric-value success">${{ "%.2f"|format(total_sales) }}</div>
+                </div>
+                
+                <div class="metric-box">
+                    <div class="metric-label">Average Sale</div>
+                    <div class="metric-value info">${{ "%.2f"|format(avg_sale) }}</div>
+                </div>
+            </div>
+            
+            <div class="metric">
+                <div class="metric-box">
+                    <div class="metric-label">Highest Sale</div>
+                    <div class="metric-value">${{ "%.2f"|format(max_sale) }}</div>
+                </div>
+                
+                <div class="metric-box">
+                    <div class="metric-label">Lowest Sale</div>
+                    <div class="metric-value">${{ "%.2f"|format(min_sale) }}</div>
+                </div>
+            </div>
+            
+            <div style="background: #f0f0f0; padding: 20px; border-radius: 8px; margin-top: 20px;">
+                <h3 style="margin-bottom: 15px;">Performance Metrics</h3>
+                <p><strong>Transaction Count:</strong> {{ trans_count }} sales processed</p>
+                <p><strong>Revenue Performance:</strong> Total revenue of ${{ "%.2f"|format(total_sales) }}</p>
+                <p><strong>Sales Consistency:</strong> Average transaction value of ${{ "%.2f"|format(avg_sale) }}</p>
+                <p><strong>Range:</strong> Sales between ${{ "%.2f"|format(min_sale) }} and ${{ "%.2f"|format(max_sale) }}</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
